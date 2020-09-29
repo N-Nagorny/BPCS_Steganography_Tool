@@ -17,6 +17,7 @@ set(SOURCES
     src/main.cpp
     src/mainwindow.cpp
     src/mainwindow.ui
+    src/stego_bpcs.cpp
 )
 
 set(HEADERS

@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "stego_bpcs.h"
 #include "ui_mainwindow.h"
 #include <QFileDialog>
 #include <QMessageBox>
@@ -43,73 +44,35 @@ void MainWindow::openImage()
         if (ui->radioButton->isChecked()) {
             QString message_name = QFileDialog::getOpenFileName(this, tr("Open a message"), QDir::currentPath());
             QString strNewName = info.path() + "/" + info.completeBaseName() + "_emb";
-            saveImage(KochEmbedder(seg_side, alpha, message_name), strNewName, imgFormat);
+
+            ifstream is;
+            is.open(message_name.toStdString());
+            BPCS::EmbedStats stats = BPCS::embed(&image_orig, seg_side, alpha, is);
+            is.close();
+
+            ui->statusBar->showMessage(QString::fromStdString(stats.stats));
+
+            Mat rectangled = image_orig.clone();
+            rectangle(rectangled , Rect(0, 0, stats.x_max, stats.y_max), Scalar(255), 1, 8, 0);
+            showImage(rectangled);
+
+            saveImage(image_orig, strNewName, imgFormat);
         }
         else if (ui->radioButton_2->isChecked()) {
             QString strNewName = info.path() + "/" + info.completeBaseName() + "_ext";
-            saveImage(KochExtractor(seg_side, alpha),strNewName, imgFormat);
+
+            ofstream os;
+            os.open("out.txt");
+            BPCS::EmbedStats stats = BPCS::extract(&image_orig, seg_side, alpha, os);
+            os.close();
+
+            Mat rectangled = image_orig.clone();
+            rectangle(rectangled , Rect(0, 0, stats.x_max, stats.y_max), Scalar(255), 1, 8, 0);
+            showImage(rectangled);
+
+            saveImage(image_orig, strNewName, imgFormat);
         }
     }
-}
-
-bool***** segment(bool**** bitPlanes, unsigned int image_side, unsigned int channels, unsigned int seg_side) {
-    int Nc = image_side * image_side / (seg_side*seg_side);
-
-    bool***** segments = new bool****[channels];
-    for (int i = 0; i < channels; i++) {
-        segments[i] = new bool***[8];
-        for (int j = 0; j < 8; j++) {
-            segments[i][j] = new bool**[Nc];
-            for (int k = 0; k < Nc; k++) {
-                segments[i][j][k] = new bool*[seg_side];
-                for (int l = 0; l < seg_side; l++) {
-                    segments[i][j][k][l] = new bool[seg_side];
-                }
-            }
-        }
-    }
-
-    for (int l = 0; l < channels; l++) {
-        for (int m = 0; m < 8; m++) {
-
-            int y = 0;
-            int n = 0;
-            int x;
-            while (y < image_side) {
-                x = 0;
-                while (x < image_side) {
-                    for (int i = 0; i < seg_side; i++) {
-                        for (int j = 0; j < seg_side; j++) {
-                            segments[l][m][n][i][j] = bitPlanes[x + i][ y + j][l][m];
-                        }
-                    }
-                    x = x + seg_side;
-                    n = n + 1;
-//                    qDebug() << n << '/' << Nc;
-                }
-                y = y + seg_side;
-            }
-        }
-    }
-    qDebug() << "segment";
-    return segments;
-}
-
-unsigned int grayencode(unsigned int g)
-{
-    return g ^ (g >> 1);
-}
-unsigned int graydecode(unsigned int gray)
-{
-    unsigned int bin;
-    for (bin = 0; gray; gray >>= 1) {
-      bin ^= gray;
-    }
-    return bin;
-}
-
-unsigned int max_segment_complexity(unsigned int cols, unsigned int rows) {
-    return ((rows-1)*cols) + ((cols-1)*rows);
 }
 
 void MainWindow::showImage(Mat image) {
@@ -122,9 +85,7 @@ void MainWindow::showImage(Mat image) {
     ui->graphicsView->setScene(scene);
 }
 
-Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString message_name) {
-//    float alpha = 0.45;
-//    bool Wc[seg_side][seg_side];
+BPCS::EmbedStats BPCS::embed(Mat* image_orig, unsigned int seg_side, double alpha, istream& is) {
     bool** Wc = new bool*[seg_side];
     for (unsigned int i = 0; i < seg_side; i++) {
         Wc[i] = new bool[seg_side];
@@ -135,18 +96,18 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
 
     unsigned int x_max = seg_side;
     unsigned int y_max = seg_side;
-    while (x_max + seg_side <= image_orig.cols && y_max + seg_side <= image_orig.rows) {
+    while (x_max + seg_side <= image_orig->cols && y_max + seg_side <= image_orig->rows) {
         x_max += seg_side;
         y_max += seg_side;
     }
     Rect Rec(0, 0, x_max, y_max);
 
-    Mat image = image_orig(Rec);
+    Mat image(*image_orig, Rec);
 // PBC to CGC conversion
     for (int i = 0; i < image.rows; i++) {
         for (int j = 0; j < image.cols; j++) {
             for(int k = 0; k < image.channels(); k++) {
-                image.at<Vec3b>(i, j)[k] = grayencode(image.at<Vec3b>(i, j)[k]);
+                image.at<Vec3b>(i, j)[k] = BPCS::grayencode(image.at<Vec3b>(i, j)[k]);
             }
         }
     }
@@ -174,7 +135,7 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
 // Calculating container segments complexity
     int Nc = image.rows * image.cols / (seg_side*seg_side);
 //qDebug() << image.channels();
-    bool***** segments = segment(bitPlanes,image.rows, image.channels(), seg_side);
+    bool***** segments = BPCS::segment(bitPlanes,image.rows, image.channels(), seg_side);
 
     bool*** iscomplex = new bool**[Nc];
     for (int i = 0; i < Nc; i++) {
@@ -190,7 +151,7 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
 
             for (int l = 0; l < 8; l++) {
 
-                float max_complexity = (float) max_segment_complexity(seg_side, seg_side);
+                float max_complexity = (float) BPCS::max_segment_complexity(seg_side, seg_side);
                 int counter = 0;
                 float complexity;
                 for (int i = 0; i < seg_side; i++) {
@@ -214,17 +175,8 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
             }
         }
     }
-    ui->statusBar->showMessage(
-                QString::number(maxComplexBlocks) + '/' + QString::number(image.channels()*Nc*8) + " blocks | " +
-                QString::number((float)maxComplexBlocks / ((float)image.channels()*Nc*8 / 100)) + '%' + " | " +
-                QString::number(maxComplexBlocks * 8) + '/' + QString::number(image_orig.cols * image_orig.rows * image.channels()) + " bytes | " +
-                QString::number((float)maxComplexBlocks * 8 / ((float)image_orig.cols * image_orig.rows * image.channels() / 100)) + '%'
-                );
 
 // Secret message segmenting
-    ifstream is;
-    is.open(message_name.toStdString());
-
     is.seekg (0, is.end);
     long length = is.tellg();
     is.seekg (0, is.beg);
@@ -272,7 +224,6 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
             }
         }
     }
-    is.close();
     qDebug() << "batch_num: " << message_blocks<< " conjugation_map_blocks: " << conjugation_map_blocks;
 
 // Calculating segments complexity для сообщения
@@ -280,7 +231,7 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
 
 //    isConjugated[0] = false;
     for (int k = 1; k < message_blocks; k++) {
-        float max_complexity = (float) max_segment_complexity(seg_side, seg_side);
+        float max_complexity = (float) BPCS::max_segment_complexity(seg_side, seg_side);
         int counter = 0;
         float complexity;
         for (int i = 0; i < seg_side; i++) {
@@ -410,7 +361,7 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
     for (int i = 0; i < image.rows; i++) {
         for (int j = 0; j < image.cols; j++) {
             for(int k = 0; k < image.channels(); k++) {
-                image.at<Vec3b>(i, j)[k] = graydecode(image.at<Vec3b>(i, j)[k]);
+                image.at<Vec3b>(i, j)[k] = BPCS::graydecode(image.at<Vec3b>(i, j)[k]);
             }
         }
     }
@@ -464,12 +415,12 @@ Mat MainWindow::KochEmbedder(unsigned int seg_side, double alpha, QString messag
         delete [] out_bitPlanes[i];
     }
     delete [] out_bitPlanes;
-
-    Mat rectangled = image_orig.clone();
-    rectangle(rectangled , Rec, Scalar(255), 1, 8, 0);
-
-    showImage(rectangled);
-    return image_orig;
+    return BPCS::make_embed_stats(x_max, y_max,
+                to_string(maxComplexBlocks) + '/' + to_string(image.channels()*Nc*8) + " blocks | " +
+                to_string((float)maxComplexBlocks / ((float)image.channels()*Nc*8 / 100)) + '%' + " | " +
+                to_string(maxComplexBlocks * 8) + '/' + to_string(image_orig->cols * image_orig->rows * image.channels()) + " bytes | " +
+                to_string((float)maxComplexBlocks * 8 / ((float)image_orig->cols * image_orig->rows * image.channels() / 100)) + '%'
+    );
 }
 
 void MainWindow::saveImage(Mat image, QString outputPath, ImgFormat format) {
@@ -490,7 +441,7 @@ void MainWindow::saveImage(Mat image, QString outputPath, ImgFormat format) {
     imwrite(finalPath.toStdString().c_str(), finalMat);
 }
 
-Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
+BPCS::EmbedStats BPCS::extract(cv::Mat* image_orig, unsigned int seg_side, double alpha, std::ostream& os) {
     bool** Wc = new bool*[seg_side];
     for (unsigned int i = 0; i < seg_side; i++) {
         Wc[i] = new bool[seg_side];
@@ -501,18 +452,18 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
 
     unsigned int x_max = seg_side;
     unsigned int y_max = seg_side;
-    while (x_max + seg_side <= image_orig.cols && y_max + seg_side <= image_orig.rows) {
+    while (x_max + seg_side <= image_orig->cols && y_max + seg_side <= image_orig->rows) {
         x_max += seg_side;
         y_max += seg_side;
     }
     Rect Rec(0, 0, x_max, y_max);
 
-    Mat image = image_orig(Rec);
+    Mat image(*image_orig, Rec);
 // PBC to CGC conversion
     for (int i = 0; i < image.rows; i++) {
         for (int j = 0; j < image.cols; j++) {
             for(int k = 0; k < image.channels(); k++) {
-                image.at<Vec3b>(i, j)[k] = grayencode(image.at<Vec3b>(i, j)[k]);
+                image.at<Vec3b>(i, j)[k] = BPCS::grayencode(image.at<Vec3b>(i, j)[k]);
             }
         }
     }
@@ -540,7 +491,7 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
 // Calculating container segments complexity
     int Nc = image.rows * image.cols / (seg_side*seg_side);
 //qDebug() << image.channels();
-    bool***** segments = segment(bitPlanes,image.rows, image.channels(), seg_side);
+    bool***** segments = BPCS::segment(bitPlanes,image.rows, image.channels(), seg_side);
 
     bool*** iscomplex = new bool**[Nc];
     for (int i = 0; i < Nc; i++) {
@@ -556,7 +507,7 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
 
             for (int l = 0; l < 8; l++) {
 
-                float max_complexity = (float) max_segment_complexity(seg_side, seg_side);
+                float max_complexity = (float) BPCS::max_segment_complexity(seg_side, seg_side);
                 int counter = 0;
                 float complexity;
                 for (int i = 0; i < seg_side; i++) {
@@ -669,8 +620,6 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
     }
 
 // Secret message building from segments
-    ofstream os;
-    os.open("out.txt");
     for (int i_mes = 0; i_mes < message_blocks; i_mes++) {
         for (int i = 0; i < 8; i++) {
             if (i_mes * seg_side +i< length) {
@@ -682,7 +631,7 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
             }
         }
     }
-    os.close();
+
 // Building bitplanes from segments
     bool**** out_bitPlanes = new bool***[image.rows];
     for (int i = 0; i < image.rows; i++) {
@@ -737,7 +686,7 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
     for (int i = 0; i < image.rows; i++) {
         for (int j = 0; j < image.cols; j++) {
             for(int k = 0; k < image.channels(); k++) {
-                image.at<Vec3b>(i, j)[k] = graydecode(image.at<Vec3b>(i, j)[k]);
+                image.at<Vec3b>(i, j)[k] = BPCS::graydecode(image.at<Vec3b>(i, j)[k]);
             }
         }
     }
@@ -793,12 +742,7 @@ Mat MainWindow::KochExtractor(unsigned int seg_side, double alpha) {
         delete [] out_bitPlanes[i];
     }
     delete [] out_bitPlanes;
-
-    Mat rectangled = image_orig.clone();
-    rectangle(rectangled , Rec, Scalar(255), 1, 8, 0);
-
-    showImage(rectangled);
-    return image_orig;
+    return BPCS::make_embed_stats(x_max, y_max, "");
 }
 
 MainWindow::~MainWindow()

@@ -37,8 +37,6 @@ private:
     double alpha = 0.3;
     ImgFormat imgFormat = ImgFormat::PNG;
 
-    Mat KochEmbedder(unsigned int seg_side, double alpha, QString message_name);
-    Mat KochExtractor(unsigned int seg_side, double alpha);
     bool** calculateHashes(Mat image, unsigned int seg_side);
     void showImage(Mat image);
     void saveImage(Mat image, QString outputPath, ImgFormat format);
