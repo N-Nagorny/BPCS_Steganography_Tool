@@ -1,9 +1,9 @@
-Based on http://datahide.org/BPCSe/principle-e.html.
+Based on http://datahide.org/BPCSe/Articles/Ref-6.SPIE98.pdf.
 
-Tested with OpenCV 3.4.4 and Qt 5.12.3.
+Tested with OpenCV 3.4.4.
 
 Build procedure:
 1. mkdir build/
 2. cd build/
-3. cmake .. -DQt5_DIR:PATH="/opt/Qt/5.12.3/gcc_64/lib/cmake/Qt5"
+3. cmake ..
 4. cmake -build .
